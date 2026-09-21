@@ -21,6 +21,15 @@ npm install
 npm test
 ```
 
+## Example
+
+```bash
+npx tsx -e "import('./src/estimate.js').then(m => console.log(JSON.stringify(m.estimateRequiredVolume(31155820n), null, 2)))"
+```
+
+0.031 SOL spend needs ~3.12 SOL pre-migration volume on Default (1% creator),
+~0.62 SOL on High Flat (5%). Units are lamports (1 SOL = 10^9).
+
 ## License
 
 MIT — see LICENSE. Not financial advice. Meme project, no utility, no profit promise.
