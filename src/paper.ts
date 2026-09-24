@@ -1,6 +1,10 @@
 /** Paper trading engine: signals in, simulated fills out. No network,
  *  no keys, no real funds. A future live adapter must be a separate,
- *  explicitly approved task; nothing here can sign or send. */
+ *  explicitly approved task; nothing here can sign or send.
+ *
+ *  All prices are SOL-denominated (native currency) per token. Fees are
+ *  passed in explicitly because pool fee modes differ (Bags default curve
+ *  is 2% total; the old hardcoded 0.5% was wrong). */
 
 export interface PaperFill {
   tokenMint: string;
@@ -15,6 +19,7 @@ export interface PaperPosition {
   tokenMint: string;
   entryPriceSol: number;
   sizeSol: number;
+  entryFeeSol: number;
   entryTime: number;
 }
 
@@ -23,6 +28,8 @@ export interface RiskLimits {
   maxConcurrent: number;
   dailyLossHaltSol: number;
   killSwitch: boolean;
+  /** total swap fee, e.g. 0.02 for a 2% pool */
+  feeRate: number;
 }
 
 export interface PaperState {
@@ -49,11 +56,13 @@ export function tryBuy(
   if (limits.killSwitch || state.halted) return null;
   if (state.positions.length >= limits.maxConcurrent) return null;
   if (state.positions.some((position) => position.tokenMint === tokenMint)) return null;
+  if (!(priceSol > 0)) return null;
+  if (!(limits.feeRate >= 0 && limits.feeRate < 1)) throw new Error("feeRate must be in [0,1)");
   const size = Math.min(limits.maxPerBetSol, state.cashSol);
-  if (!(size > 0) || !(priceSol > 0)) return null;
-  const fee = size * 0.005;
+  if (!(size > 0)) return null;
+  const fee = size * limits.feeRate;
   state.cashSol -= size;
-  state.positions.push({ tokenMint, entryPriceSol: priceSol, sizeSol: size - fee, entryTime: time });
+  state.positions.push({ tokenMint, entryPriceSol: priceSol, sizeSol: (size - fee) / priceSol, entryFeeSol: fee, entryTime: time });
   const fill: PaperFill = { tokenMint, side: "buy", priceSol, sizeSol: size, feeSol: fee, reason: "signal" };
   state.fills.push(fill);
   return fill;
@@ -69,13 +78,12 @@ export function trySell(
   if (limits.killSwitch || state.halted) return null;
   const index = state.positions.findIndex((position) => position.tokenMint === tokenMint);
   if (index < 0 || !(priceSol > 0)) return null;
+  if (!(limits.feeRate >= 0 && limits.feeRate < 1)) throw new Error("feeRate must be in [0,1)");
   const position = state.positions[index]!;
-  const gross = position.sizeSol * (priceSol / position.entryPriceSol);
-  const fee = gross * 0.005;
+  const gross = position.sizeSol * priceSol;
+  const fee = gross * limits.feeRate;
   const proceeds = gross - fee;
-  const pnl = proceeds - (position.sizeSol + state.fills.find(
-    (fill) => fill.tokenMint === tokenMint && fill.side === "buy",
-  )!.feeSol);
+  const pnl = proceeds - (position.sizeSol * position.entryPriceSol + position.entryFeeSol);
   state.positions.splice(index, 1);
   state.cashSol += proceeds;
   state.realizedPnlSol += pnl;
